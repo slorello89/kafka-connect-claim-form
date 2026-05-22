@@ -9,6 +9,11 @@ they get extracted. All messages from the same conversation share a
 The sink uses ``conversation_id`` as the Redis hash key, so successive messages
 HSET additional fields onto the same hash, building the claim form up
 incrementally.
+
+Each conversation is independently scheduled: phases emit roughly every
+``PHASE_INTERVAL_SECONDS`` seconds (with jitter), so a full 5-phase form
+hydrates in about ``4 * PHASE_INTERVAL`` seconds — bounded and predictable,
+regardless of how many conversations run concurrently.
 """
 
 import json
@@ -16,6 +21,7 @@ import os
 import random
 import time
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from faker import Faker
@@ -26,8 +32,12 @@ fake = Faker()
 
 BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "kafka:9092")
 TOPIC = os.environ.get("TOPIC", "claim-form")
-INTERVAL = float(os.environ.get("INTERVAL_SECONDS", "3"))
-NEW_CONVERSATION_PROB = float(os.environ.get("NEW_CONVERSATION_PROB", "0.25"))
+NEW_CONVERSATION_INTERVAL = float(
+    os.environ.get("NEW_CONVERSATION_INTERVAL_SECONDS", "6")
+)
+PHASE_INTERVAL = float(os.environ.get("PHASE_INTERVAL_SECONDS", "22"))
+PHASE_JITTER = float(os.environ.get("PHASE_JITTER_SECONDS", "3"))
+TICK_SECONDS = float(os.environ.get("TICK_SECONDS", "0.5"))
 
 INCIDENT_TYPES = [
     "rear-end collision",
@@ -49,6 +59,14 @@ FACT_GROUPS = [
     ["incident_type", "date_of_incident"],
     ["incident_description", "claim_amount"],
 ]
+
+
+@dataclass
+class Conversation:
+    conv_id: str
+    full_claim: dict
+    next_group: int = 0
+    next_emit_at: float = field(default=0.0)
 
 
 def connect_producer() -> KafkaProducer:
@@ -86,55 +104,62 @@ def generate_full_claim() -> dict:
     }
 
 
-def start_conversation(active: dict) -> str:
-    conv_id = str(uuid.uuid4())
-    active[conv_id] = {
-        "full_claim": generate_full_claim(),
-        "next_group": 0,
-    }
-    return conv_id
-
-
-def pick_conversation(active: dict) -> str:
-    """Return an existing conversation id, or start a new one."""
-    if not active or random.random() < NEW_CONVERSATION_PROB:
-        return start_conversation(active)
-    return random.choice(list(active.keys()))
-
-
-def build_message(active: dict, conv_id: str) -> dict:
-    state = active[conv_id]
-    fields = FACT_GROUPS[state["next_group"]]
-    payload = {field: state["full_claim"][field] for field in fields}
-    payload["conversation_id"] = conv_id
+def emit_phase(producer: KafkaProducer, conv: Conversation) -> None:
+    fields = FACT_GROUPS[conv.next_group]
+    payload = {f: conv.full_claim[f] for f in fields}
+    payload["conversation_id"] = conv.conv_id
     payload["message_id"] = str(uuid.uuid4())
     payload["captured_at"] = datetime.now(timezone.utc).isoformat()
-    state["next_group"] += 1
-    if state["next_group"] >= len(FACT_GROUPS):
-        del active[conv_id]
-    return payload
+    producer.send(TOPIC, value=payload)
+    producer.flush()
+    print(
+        f"conv={conv.conv_id[:8]} phase={conv.next_group + 1}/{len(FACT_GROUPS)} "
+        f"fields={fields}",
+        flush=True,
+    )
+    conv.next_group += 1
 
 
 def main() -> None:
     producer = connect_producer()
+    expected_total = PHASE_INTERVAL * (len(FACT_GROUPS) - 1)
     print(
-        f"Producing to topic '{TOPIC}' on {BOOTSTRAP} every {INTERVAL}s "
-        f"(new-conversation prob={NEW_CONVERSATION_PROB})",
+        f"Producing to topic '{TOPIC}' on {BOOTSTRAP}. "
+        f"new conv every {NEW_CONVERSATION_INTERVAL}s; "
+        f"phase every {PHASE_INTERVAL}±{PHASE_JITTER}s; "
+        f"expected per-conversation hydration ≈ {expected_total:.0f}s",
         flush=True,
     )
-    active: dict[str, dict] = {}
+    active: list[Conversation] = []
+    next_new_at = time.monotonic()
+
     while True:
-        conv_id = pick_conversation(active)
-        message = build_message(active, conv_id)
-        producer.send(TOPIC, value=message)
-        producer.flush()
-        fields = [k for k in message if k not in {"conversation_id", "message_id", "captured_at"}]
-        print(
-            f"conv={conv_id[:8]} message_id={message['message_id'][:8]} "
-            f"fields={fields}",
-            flush=True,
-        )
-        time.sleep(INTERVAL)
+        now = time.monotonic()
+
+        if now >= next_new_at:
+            conv = Conversation(
+                conv_id=str(uuid.uuid4()),
+                full_claim=generate_full_claim(),
+                next_emit_at=now,
+            )
+            active.append(conv)
+            next_new_at = now + NEW_CONVERSATION_INTERVAL
+
+        still_active: list[Conversation] = []
+        for conv in active:
+            while (
+                conv.next_group < len(FACT_GROUPS)
+                and time.monotonic() >= conv.next_emit_at
+            ):
+                emit_phase(producer, conv)
+                conv.next_emit_at = time.monotonic() + PHASE_INTERVAL + random.uniform(
+                    -PHASE_JITTER, PHASE_JITTER
+                )
+            if conv.next_group < len(FACT_GROUPS):
+                still_active.append(conv)
+        active = still_active
+
+        time.sleep(TICK_SECONDS)
 
 
 if __name__ == "__main__":
