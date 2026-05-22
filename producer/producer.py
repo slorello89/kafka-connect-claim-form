@@ -33,10 +33,10 @@ fake = Faker()
 BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "kafka:9092")
 TOPIC = os.environ.get("TOPIC", "claim-form")
 NEW_CONVERSATION_INTERVAL = float(
-    os.environ.get("NEW_CONVERSATION_INTERVAL_SECONDS", "6")
+    os.environ.get("NEW_CONVERSATION_INTERVAL_SECONDS", "4")
 )
-PHASE_INTERVAL = float(os.environ.get("PHASE_INTERVAL_SECONDS", "22"))
-PHASE_JITTER = float(os.environ.get("PHASE_JITTER_SECONDS", "3"))
+PHASE_INTERVAL = float(os.environ.get("PHASE_INTERVAL_SECONDS", "6"))
+PHASE_JITTER = float(os.environ.get("PHASE_JITTER_SECONDS", "1"))
 TICK_SECONDS = float(os.environ.get("TICK_SECONDS", "0.5"))
 
 INCIDENT_TYPES = [

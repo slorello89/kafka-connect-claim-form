@@ -86,9 +86,9 @@ services:
     environment:
       KAFKA_BOOTSTRAP: kafka:9092
       TOPIC: claim-form
-      NEW_CONVERSATION_INTERVAL_SECONDS: "6"
-      PHASE_INTERVAL_SECONDS: "22"
-      PHASE_JITTER_SECONDS: "3"
+      NEW_CONVERSATION_INTERVAL_SECONDS: "4"
+      PHASE_INTERVAL_SECONDS: "6"
+      PHASE_JITTER_SECONDS: "1"
     restart: unless-stopped
 
   frontend:
