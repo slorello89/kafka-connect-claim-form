@@ -1,0 +1,23 @@
+{
+  "name": "claim-form-sink",
+  "config": {
+    "connector.class": "com.redis.kafka.connect.RedisSinkConnector",
+    "tasks.max": "1",
+    "topics": "claim-form",
+
+    "redis.uri": "redis://redis:6379",
+    "redis.command": "HSET",
+    "redis.key": "${topic}",
+    "redis.separator": ":",
+
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false",
+
+    "transforms": "ValueToKey,ExtractKey",
+    "transforms.ValueToKey.type": "org.apache.kafka.connect.transforms.ValueToKey",
+    "transforms.ValueToKey.fields": "conversation_id",
+    "transforms.ExtractKey.type": "org.apache.kafka.connect.transforms.ExtractField$Key",
+    "transforms.ExtractKey.field": "conversation_id"
+  }
+}
