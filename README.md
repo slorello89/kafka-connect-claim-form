@@ -10,6 +10,7 @@ A minimal sandbox to exercise [redis-kafka-connect](https://github.com/redis-fie
 | `kafka` | Apache Kafka 3.7 in KRaft (single-node, no zookeeper). |
 | `connect` | Confluent Kafka Connect with the `redis/redis-kafka-connect` plugin installed at image build time. |
 | `redis` | `redis/redis-stack` as the sink — also exposes RedisInsight on `:8001`. |
+| `frontend` | FastAPI + a single-page UI on `:8080` that lists conversations and lets you click into one to see its claim form fill out in near-real-time. |
 
 ## How the message becomes a hash
 
@@ -60,7 +61,7 @@ docker exec -it redis redis-cli HGETALL claim-form:<message_id>
 curl -s localhost:8083/connectors/claim-form-sink/status | jq .
 ```
 
-Or open RedisInsight at <http://localhost:8001>.
+Or open the frontend at <http://localhost:8080> to browse conversations interactively, or RedisInsight at <http://localhost:8001>.
 
 ### Tear down
 

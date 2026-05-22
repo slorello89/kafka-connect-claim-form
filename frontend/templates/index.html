@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en" class="bg-slate-50">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claim Forms — redis-kafka-connect sandbox</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="text-slate-800">
+    <header class="bg-white border-b border-slate-200 px-6 py-3 flex items-baseline justify-between">
+      <div>
+        <h1 class="text-lg font-semibold">Claim forms — live from Redis</h1>
+        <p class="text-xs text-slate-500">
+          Keyspace <code class="px-1 bg-slate-100 rounded">{{ keyspace }}:*</code>
+          · auto-refresh every 2s
+        </p>
+      </div>
+      <div id="status" class="text-xs text-slate-400"></div>
+    </header>
+
+    <main class="flex" style="height: calc(100vh - 60px)">
+      <aside class="w-96 border-r bg-white overflow-y-auto shrink-0">
+        <div
+          id="counter"
+          class="px-4 py-2 text-xs uppercase tracking-wide text-slate-500 border-b sticky top-0 bg-white"
+        >
+          loading…
+        </div>
+        <ul id="convList" class="divide-y"></ul>
+      </aside>
+
+      <section id="detail" class="flex-1 overflow-y-auto p-8">
+        <div class="text-slate-400 italic">Select a conversation on the left.</div>
+      </section>
+    </main>
+
+    <script>
+      const FACT_TOTAL = {{ fact_total }};
+      const FACT_ORDER = [
+        "claimant_name",
+        "date_of_birth",
+        "contact_phone",
+        "address",
+        "policy_number",
+        "incident_type",
+        "date_of_incident",
+        "incident_description",
+        "claim_amount",
+      ];
+      const LABELS = {
+        claimant_name: "Claimant name",
+        date_of_birth: "Date of birth",
+        contact_phone: "Phone",
+        address: "Address",
+        policy_number: "Policy number",
+        incident_type: "Incident type",
+        date_of_incident: "Date of incident",
+        incident_description: "Incident description",
+        claim_amount: "Claim amount",
+      };
+      const FULL_WIDTH = new Set(["address", "incident_description"]);
+
+      let selectedId = null;
+
+      const escapeHtml = (s) =>
+        String(s).replace(/[&<>"']/g, (c) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        }[c]));
+
+      const formatValue = (k, v) => {
+        if (v == null || v === "") return null;
+        if (k === "claim_amount") {
+          const n = parseFloat(v);
+          if (Number.isFinite(n)) {
+            return n.toLocaleString(undefined, {
+              style: "currency",
+              currency: "USD",
+            });
+          }
+        }
+        return v;
+      };
+
+      async function refreshList() {
+        try {
+          const items = await fetch("/api/conversations").then((r) => r.json());
+          const counter = document.getElementById("counter");
+          counter.textContent = `${items.length} conversation${items.length === 1 ? "" : "s"}`;
+
+          const ul = document.getElementById("convList");
+          ul.innerHTML = items
+            .map((it) => {
+              const pct = Math.round((it.facts_filled / FACT_TOTAL) * 100);
+              const active = it.id === selectedId;
+              return `
+                <li>
+                  <button
+                    data-id="${escapeHtml(it.id)}"
+                    class="conv w-full text-left px-4 py-3 hover:bg-slate-50 transition ${
+                      active
+                        ? "bg-blue-50 border-l-4 border-blue-500"
+                        : "border-l-4 border-transparent"
+                    }"
+                  >
+                    <div class="text-sm font-medium truncate">
+                      ${escapeHtml(it.claimant_name || "(no name yet)")}
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono truncate">
+                      ${escapeHtml(it.id)}
+                    </div>
+                    <div class="text-xs mt-2 flex items-center justify-between gap-2">
+                      <span class="text-slate-500 truncate">${escapeHtml(it.incident_type || "—")}</span>
+                      <span class="shrink-0 px-1.5 py-0.5 rounded ${
+                        it.facts_filled === FACT_TOTAL
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-slate-100 text-slate-600"
+                      }">${it.facts_filled}/${FACT_TOTAL}</span>
+                    </div>
+                    <div class="mt-1 h-1 bg-slate-100 rounded overflow-hidden">
+                      <div class="h-full ${
+                        it.facts_filled === FACT_TOTAL ? "bg-emerald-500" : "bg-blue-500"
+                      }" style="width: ${pct}%"></div>
+                    </div>
+                  </button>
+                </li>
+              `;
+            })
+            .join("");
+
+          for (const btn of ul.querySelectorAll("button.conv")) {
+            btn.addEventListener("click", () => select(btn.dataset.id));
+          }
+          document.getElementById("status").textContent = `Updated ${new Date().toLocaleTimeString()}`;
+        } catch (err) {
+          document.getElementById("status").textContent = "Error fetching list";
+        }
+      }
+
+      async function refreshDetail() {
+        if (!selectedId) return;
+        let data;
+        try {
+          const resp = await fetch(`/api/conversations/${selectedId}`);
+          if (!resp.ok) return;
+          data = await resp.json();
+        } catch (err) {
+          return;
+        }
+
+        const cells = FACT_ORDER.map((k) => {
+          const formatted = formatValue(k, data[k]);
+          const present = formatted !== null;
+          return `
+            <div class="${FULL_WIDTH.has(k) ? "col-span-2" : ""}">
+              <div class="text-xs uppercase tracking-wider text-slate-500">
+                ${LABELS[k]}
+              </div>
+              <div class="mt-0.5 ${
+                present
+                  ? k === "incident_description"
+                    ? "text-slate-900"
+                    : "text-slate-900 font-medium"
+                  : "text-slate-300 italic"
+              }">
+                ${present ? escapeHtml(formatted) : "awaiting…"}
+              </div>
+            </div>
+          `;
+        }).join("");
+
+        document.getElementById("detail").innerHTML = `
+          <div class="max-w-3xl">
+            <div class="text-[11px] text-slate-400 font-mono mb-1">claim-form:${escapeHtml(
+              data.conversation_id || selectedId,
+            )}</div>
+            <h2 class="text-2xl font-bold">
+              ${escapeHtml(data.claimant_name || "Unnamed claimant")}
+            </h2>
+            <p class="text-xs text-slate-500 mt-1 mb-6">
+              Last update <span class="font-mono">${escapeHtml(data.captured_at || "—")}</span>
+              · latest message
+              <span class="font-mono">${escapeHtml(data.message_id || "—")}</span>
+            </p>
+            <div class="bg-white rounded-lg shadow-sm border border-slate-200 p-6 grid grid-cols-2 gap-x-8 gap-y-5">
+              ${cells}
+            </div>
+          </div>
+        `;
+      }
+
+      function select(id) {
+        selectedId = id;
+        refreshList();
+        refreshDetail();
+      }
+
+      refreshList();
+      setInterval(refreshList, 2000);
+      setInterval(refreshDetail, 2000);
+    </script>
+  </body>
+</html>

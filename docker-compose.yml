@@ -88,3 +88,16 @@ services:
       TOPIC: claim-form
       INTERVAL_SECONDS: "3"
     restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8080:8000"
+    environment:
+      REDIS_URL: redis://redis:6379
+      KEYSPACE: claim-form
+    restart: unless-stopped
