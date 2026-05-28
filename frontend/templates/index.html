@@ -20,9 +20,53 @@
 
     <main class="flex" style="height: calc(100vh - 60px)">
       <aside class="w-96 border-r bg-white overflow-y-auto shrink-0">
+        <form
+          id="filters"
+          class="px-4 py-3 border-b bg-slate-50 sticky top-0 z-10 space-y-2"
+          autocomplete="off"
+        >
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">
+            Filter (RediSearch)
+          </div>
+          <input
+            name="claimant"
+            type="text"
+            placeholder="Claimant name"
+            class="w-full text-sm px-2 py-1 border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <input
+            name="policy_number"
+            type="text"
+            placeholder="Policy number (exact)"
+            class="w-full text-sm px-2 py-1 border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <input
+            name="date_of_incident"
+            type="text"
+            placeholder="Date of incident (YYYY-MM-DD)"
+            class="w-full text-sm px-2 py-1 border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <input
+            name="description"
+            type="text"
+            placeholder="Description contains…"
+            class="w-full text-sm px-2 py-1 border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <div class="flex items-center justify-between gap-2 pt-1">
+            <button
+              type="button"
+              id="clearFilters"
+              class="text-xs text-slate-500 hover:text-slate-800 underline"
+            >
+              Clear
+            </button>
+            <span id="filterState" class="text-[10px] text-slate-400"></span>
+          </div>
+        </form>
         <div
           id="counter"
-          class="px-4 py-2 text-xs uppercase tracking-wide text-slate-500 border-b sticky top-0 bg-white"
+          class="px-4 py-2 text-xs uppercase tracking-wide text-slate-500 border-b sticky bg-white"
+          style="top: 0"
         >
           loading…
         </div>
@@ -61,6 +105,22 @@
       const FULL_WIDTH = new Set(["address", "incident_description"]);
 
       let selectedId = null;
+      const FILTER_FIELDS = [
+        "claimant",
+        "policy_number",
+        "date_of_incident",
+        "description",
+      ];
+
+      function currentFilters() {
+        const form = document.getElementById("filters");
+        const params = new URLSearchParams();
+        for (const name of FILTER_FIELDS) {
+          const v = form.elements[name].value.trim();
+          if (v) params.set(name, v);
+        }
+        return params;
+      }
 
       const escapeHtml = (s) =>
         String(s).replace(/[&<>"']/g, (c) => ({
@@ -87,9 +147,17 @@
 
       async function refreshList() {
         try {
-          const items = await fetch("/api/conversations").then((r) => r.json());
+          const params = currentFilters();
+          const filtered = params.toString().length > 0;
+          const url = filtered
+            ? `/api/conversations?${params.toString()}`
+            : "/api/conversations";
+          const items = await fetch(url).then((r) => r.json());
           const counter = document.getElementById("counter");
-          counter.textContent = `${items.length} conversation${items.length === 1 ? "" : "s"}`;
+          counter.textContent = `${items.length} conversation${items.length === 1 ? "" : "s"}${filtered ? " (filtered)" : ""}`;
+          document.getElementById("filterState").textContent = filtered
+            ? `${params.size} filter${params.size === 1 ? "" : "s"} active`
+            : "";
 
           const ul = document.getElementById("convList");
           ul.innerHTML = items
@@ -197,6 +265,23 @@
         refreshList();
         refreshDetail();
       }
+
+      let filterDebounce = null;
+      function onFilterInput() {
+        clearTimeout(filterDebounce);
+        filterDebounce = setTimeout(refreshList, 200);
+      }
+      const filtersForm = document.getElementById("filters");
+      for (const name of FILTER_FIELDS) {
+        filtersForm.elements[name].addEventListener("input", onFilterInput);
+      }
+      filtersForm.addEventListener("submit", (e) => e.preventDefault());
+      document.getElementById("clearFilters").addEventListener("click", () => {
+        for (const name of FILTER_FIELDS) {
+          filtersForm.elements[name].value = "";
+        }
+        refreshList();
+      });
 
       refreshList();
       setInterval(refreshList, 2000);
